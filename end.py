@@ -13,11 +13,6 @@ import re
 # Load environment variables
 load_dotenv()
 # frontend.py
-import os
-import streamlit as st
-
-os.environ["HUGGINGFACEHUB_API_TOKEN"] = st.secrets["huggingface"]["api_token"]
-
 
 
 # ---- HuggingFace Model Setup ----
@@ -287,3 +282,4 @@ if history:
     )
 else:
     st.info("No past evaluations found.")
+
