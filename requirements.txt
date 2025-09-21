@@ -4,5 +4,3 @@ python-dotenv
 langchain
 langchain-huggingface
 huggingface-hub
-
-
