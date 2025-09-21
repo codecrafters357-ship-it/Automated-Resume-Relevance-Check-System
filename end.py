@@ -12,8 +12,6 @@ import re
 
 # Load environment variables
 load_dotenv()
-# frontend.py
-
 
 # ---- HuggingFace Model Setup ----
 hf_llm = HuggingFaceEndpoint(
@@ -80,7 +78,11 @@ def safe_json_parse(text):
     try:
         match = re.search(r"\{.*\}", text, re.DOTALL)
         if match:
-            return json.loads(match.group(0))
+            json_str = match.group(0)
+            json_str = re.sub(r"'", '"', json_str)
+            json_str = re.sub(r",\s*}", "}", json_str)
+            json_str = re.sub(r",\s*]", "]", json_str)
+            return json.loads(json_str)
         return json.loads(text)
     except Exception as e:
         st.error(f"JSON parsing failed: {e}")
@@ -88,9 +90,6 @@ def safe_json_parse(text):
 
 # ---- Weighted Scoring ----
 def calculate_weighted_score(ats_result, resume_text, jd_text):
-    """
-    Hybrid scoring: 70% LLM score + 30% keyword overlap.
-    """
     try:
         llm_score = int(ats_result.get("Relevance Score", 0))
     except:
@@ -150,14 +149,11 @@ if st.button("Submit"):
 
                 ats_result = safe_json_parse(response_text)
                 if ats_result:
-                    # Compute weighted score
                     final_score = calculate_weighted_score(ats_result, resume_text, jd_text)
                     ats_result["Final Score"] = final_score
 
-                    # Save in DB
                     save_ats_result(resume_file, jd_file, resume_text, jd_text, ats_result)
 
-                    # Collect for batch display
                     results.append({
                         "Resume": resume_file.name,
                         "Relevance Score": ats_result.get("Relevance Score", "N/A"),
@@ -169,12 +165,29 @@ if st.button("Submit"):
                         "Missing Projects": ", ".join(ats_result.get("Missing Projects", [])),
                         "Suggestions": " | ".join(ats_result.get("Suggestions", [])),
                     })
-            
-            if results:
-                df = pd.DataFrame(results)
-                st.markdown("### 🏆 ATS Evaluation Results")
-                st.dataframe(df, use_container_width=True)
 
+            if results:
+                st.markdown("### 🏆 ATS Evaluation Results")
+                for result in results:
+                    with st.expander(f"📄 {result['Resume']} — Suitability: {result['Suitability']} | Final Score: {result['Final Score']}"):
+                        st.markdown(f"**Relevance Score:** {result['Relevance Score']}")
+
+                        st.markdown("**Matched Skills:**")
+                        st.markdown("\n".join([f"- {skill}" for skill in result['Matched Skills'].split(', ') if skill]))
+
+                        st.markdown("**Missing Skills:**")
+                        st.markdown("\n".join([f"- {skill}" for skill in result['Missing Skills'].split(', ') if skill]))
+
+                        st.markdown("**Missing Certifications:**")
+                        st.markdown("\n".join([f"- {cert}" for cert in result['Missing Certifications'].split(', ') if cert]))
+
+                        st.markdown("**Missing Projects:**")
+                        st.markdown("\n".join([f"- {proj}" for proj in result['Missing Projects'].split(', ') if proj]))
+
+                        st.markdown("**Suggestions:**")
+                        st.markdown("\n".join([f"- {sugg}" for sugg in result['Suggestions'].split(' | ') if sugg]))
+
+                df = pd.DataFrame(results)
                 st.download_button(
                     "📥 Download Results (CSV)",
                     df.to_csv(index=False),
@@ -183,44 +196,6 @@ if st.button("Submit"):
                 )
 
                 st.success("✅ Evaluations saved to database.")
-
-# ---- Past Evaluations Dashboard ----
-st.markdown("---")
-st.header("📜 Past ATS Evaluations")
-
-history = fetch_ats_history()
-
-if history:
-    for record in history:
-        record_id, resume_name, jd_name, result_json, created_at = record
-        result_dict = json.loads(result_json)
-
-        with st.expander(f"Resume: {resume_name} | JD: {jd_name} | Date: {created_at}"):
-            st.metric("Relevance Score", result_dict.get("Relevance Score", "N/A"))
-            st.metric("Final Score", result_dict.get("Final Score", "N/A"))
-            st.metric("Suitability", result_dict.get("Suitability", "N/A"))
-
-            st.markdown("**Matched Skills:**")
-            for skill in result_dict.get("Matched Skills", []):
-                st.markdown(f"- {skill}")
-
-            st.markdown("**Missing Skills:**")
-            for skill in result_dict.get("Missing Skills", []):
-                st.markdown(f"- {skill}")
-
-            st.markdown("**Missing Certifications:**")
-            for cert in result_dict.get("Missing Certifications", []):
-                st.markdown(f"- {cert}")
-
-            st.markdown("**Missing Projects:**")
-            for proj in result_dict.get("Missing Projects", []):
-                st.markdown(f"- {proj}")
-
-            st.markdown("**Suggestions:**")
-            for point in result_dict.get("Suggestions", []):
-                st.markdown(f"- {point}")
-else:
-    st.info("No past evaluations found.")
 
 # ---- Recruiter Dashboard ----
 st.markdown("---")
@@ -239,47 +214,57 @@ if history:
             "Relevance Score": int(result_dict.get("Relevance Score", 0)),
             "Final Score": float(result_dict.get("Final Score", 0)),
             "Suitability": result_dict.get("Suitability", "N/A"),
-            "Matched Skills": ", ".join(result_dict.get("Matched Skills", [])),
-            "Missing Skills": ", ".join(result_dict.get("Missing Skills", [])),
-            "Missing Certifications": ", ".join(result_dict.get("Missing Certifications", [])),
-            "Missing Projects": ", ".join(result_dict.get("Missing Projects", [])),
-            "Suggestions": " | ".join(result_dict.get("Suggestions", [])),
+            "Matched Skills": result_dict.get("Matched Skills", []),
+            "Missing Skills": result_dict.get("Missing Skills", []),
+            "Missing Certifications": result_dict.get("Missing Certifications", []),
+            "Missing Projects": result_dict.get("Missing Projects", []),
+            "Suggestions": result_dict.get("Suggestions", []),
             "Created At": created_at
         })
-    
+
     df = pd.DataFrame(records)
 
-    # Filters
-    st.subheader("🔍 Filter Results")
-    suitability_filter = st.multiselect("Suitability", df["Suitability"].unique(), default=df["Suitability"].unique())
-    min_score, max_score = st.slider("Final Score Range", 0, 100, (0, 100))
+    tab1, tab2 = st.tabs(["📋 Table View", "📊 Metrics & Charts"])
 
-    filtered_df = df[
-        (df["Suitability"].isin(suitability_filter)) &
-        (df["Final Score"].between(min_score, max_score))
-    ]
+    with tab1:
+        st.subheader("🔍 Filter Results")
+        suitability_filter = st.multiselect("Filter by Suitability", df["Suitability"].unique(), default=df["Suitability"].unique())
+        min_score, max_score = st.slider("Filter by Final Score", 0, 100, (0, 100))
 
-    st.dataframe(filtered_df, use_container_width=True)
+        filtered_df = df[
+            (df["Suitability"].isin(suitability_filter)) &
+            (df["Final Score"].between(min_score, max_score))
+        ]
 
-    # Metrics
-    st.subheader("📈 Overview")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Evaluations", len(df))
-    col2.metric("High Suitability", (df["Suitability"] == "High").sum())
-    col3.metric("Avg Final Score", round(df["Final Score"].mean(), 2))
+        def bullet_list(items):
+            return "\n".join([f"- {item}" for item in items if item])
 
-    # Chart: Suitability distribution
-    st.subheader("📊 Suitability Distribution")
-    suitability_counts = df["Suitability"].value_counts()
-    st.bar_chart(suitability_counts)
+        filtered_df["Matched Skills"] = filtered_df["Matched Skills"].apply(bullet_list)
+        filtered_df["Missing Skills"] = filtered_df["Missing Skills"].apply(bullet_list)
+        filtered_df["Missing Certifications"] = filtered_df["Missing Certifications"].apply(bullet_list)
+        filtered_df["Missing Projects"] = filtered_df["Missing Projects"].apply(bullet_list)
+        filtered_df["Suggestions"] = filtered_df["Suggestions"].apply(bullet_list)
 
-    # Export
-    st.download_button(
-        "📥 Download Dashboard Data (CSV)",
-        filtered_df.to_csv(index=False),
-        file_name="ats_dashboard.csv",
-        mime="text/csv"
-    )
+        st.dataframe(filtered_df.drop(columns=["Created At"]), use_container_width=True)
+
+        st.download_button(
+            "📥 Download Filtered Data (CSV)",
+            filtered_df.to_csv(index=False),
+            file_name="ats_dashboard_filtered.csv",
+            mime="text/csv"
+        )
+
+    with tab2:
+        st.subheader("📈 Overview Metrics")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Total Evaluations", len(df))
+        col2.metric("High Suitability", (df["Suitability"] == "High").sum())
+        col3.metric("Average Final Score", round(df["Final Score"].mean(), 2))
+
+        st.subheader("📊 Suitability Distribution")
+        suitability_counts = df["Suitability"].value_counts()
+        st.bar_chart(suitability_counts)
+
 else:
     st.info("No past evaluations found.")
 
